@@ -6,25 +6,26 @@ type CallBackPtr func(usrTag string, respData []WrapperData, err error) (ret err
 type CustomFuncType int
 
 const (
-	DataText  DataType = 0 // �~V~G�~\��~U��~M�
-	DataAudio DataType = 1 // �~_��~Q�~U��~M�
-	DataImage DataType = 2 // �~[��~C~O�~U��~M�
-	DataVideo DataType = 3 // �~F�~Q�~U��~M�
-	DataPer   DataType = 4 // 个�~@��~L~V�~U��~M�
+	DataText  DataType = 0 // 文本数据
+	DataAudio DataType = 1 // 音频数据
+	DataImage DataType = 2 // 图像数据
+	DataVideo DataType = 3 // 视频数据
+	DataPer   DataType = 4 // 个性化数据
+	DataRaw   DataType = 4 // 二进制流
 
-	DataBegin    DataStatus = 0 // �~V�~U��~M�
-	DataContinue DataStatus = 1 // 中�~W��~U��~M�
-	DataEnd      DataStatus = 2 // 尾�~U��~M�
-	DataOnce     DataStatus = 3 // �~]~^�~Z�~]�~M~U次�~S�~E�
+	DataBegin    DataStatus = 0 // 首数据
+	DataContinue DataStatus = 1 // 中间数据
+	DataEnd      DataStatus = 2 // 尾数据
+	DataOnce     DataStatus = 3 // 非会话单次输入
 )
 
 type WrapperData struct {
-	Key      string            // �~U��~M��| ~G�~F
-	Data     []byte            // �~U��~M��~^�~S
-	Desc     map[string]string // �~U��~M��~O~O述
-	Encoding string            // �~U��~M��~V�| ~A
-	Type     DataType          // �~U��~M�类�~^~K
-	Status   DataStatus        // �~U��~M��~J��~@~A
+	Key      string            // 数据标识
+	Data     []byte            // 数据实体
+	Desc     map[string]string // 数据描述
+	Encoding string            // 数据编码
+	Type     DataType          // 数据类型
+	Status   DataStatus        // 数据状态
 }
 
 const (

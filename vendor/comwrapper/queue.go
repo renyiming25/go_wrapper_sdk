@@ -4,13 +4,13 @@ import (
 	"sync"
 )
 
-// Queue �~X��~@个并�~O~Q�~I�~E��~Z~D�~X~_�~H~W�~S�~^~D
+// Queue 是一个并发安全的队列结构
 type Queue struct {
 	items []interface{}
 	lock  sync.Mutex
 }
 
-// NewQueue �~H~[建�~@个�~V��~Z~D�~X~_�~H~W
+// NewQueue 创建一个新的队列
 func NewQueue() *Queue {
 	return &Queue{
 		items: make([]interface{}, 0),
@@ -18,7 +18,7 @@ func NewQueue() *Queue {
 	}
 }
 
-// Enqueue �~F�~E~C�| �~T��~E��~X~_�~H~W尾�~C�
+// Enqueue 将元素放入队列尾部
 func (q *Queue) Enqueue(item interface{}) {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -26,7 +26,7 @@ func (q *Queue) Enqueue(item interface{}) {
 	q.items = append(q.items, item)
 }
 
-// Dequeue �~N�~X~_�~H~W头�~C��~O~V�~G��~E~C�|
+// Dequeue 从队列头部取出元素
 func (q *Queue) Dequeue() interface{} {
 	q.lock.Lock()
 	defer q.lock.Unlock()
@@ -40,7 +40,7 @@ func (q *Queue) Dequeue() interface{} {
 	return item
 }
 
-// Len �~T�~[~^�~X~_�~H~W中�~E~C�| �~Z~D个�~U�
+// Len 返回队列中元素的个数
 func (q *Queue) Len() int {
 	q.lock.Lock()
 	defer q.lock.Unlock()
