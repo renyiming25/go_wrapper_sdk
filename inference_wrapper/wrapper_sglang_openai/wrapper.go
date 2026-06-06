@@ -829,32 +829,34 @@ func openaiFunctionCall(inst *wrapperInst, functions []openai.FunctionDefinition
 	return nil
 }
 func buildStreamReq(inst *wrapperInst, req comwrapper.WrapperData) (*openai.ChatCompletionRequest, []openai.FunctionDefinition, bool, error) {
-	// 从params中获取参数, 否则不传
+	// 从params中获取参数, 仅用户显式传入时才设置
 	var (
-		temp = float64(0)
-		mt   = 0
-		tp   = float64(0)
-		stop []string
+		temperature *float32
+		maxTokens   int
+		topP        *float32
+		stop        []string
 	)
 	if tempStr, ok := inst.params["temperature"]; ok {
 		if t, err := strconv.ParseFloat(tempStr, 64); err == nil {
-			temp = t
+			v := float32(t)
+			temperature = &v
 		} else {
 			wLogger.Warnw("Invalid temperature value", "value", tempStr, "sid", inst.sid)
 		}
 	}
 
-	if tokens, ok := inst.params["max_tokens"]; ok {
-		if t, err := strconv.Atoi(tokens); err == nil {
-			mt = t
+	if tokensStr, ok := inst.params["max_tokens"]; ok {
+		if t, err := strconv.Atoi(tokensStr); err == nil {
+			maxTokens = t
 		} else {
-			wLogger.Warnw("Invalid max_tokens value", "value", tokens, "sid", inst.sid)
+			wLogger.Warnw("Invalid max_tokens value", "value", tokensStr, "sid", inst.sid)
 		}
 	}
 
 	if tpStr, ok := inst.params["top_p"]; ok {
 		if t, err := strconv.ParseFloat(tpStr, 32); err == nil {
-			tp = t
+			v := float32(t)
+			topP = &v
 		} else {
 			wLogger.Warnw("Invalid top_p value", "value", tpStr, "sid", inst.sid)
 		}
@@ -863,21 +865,31 @@ func buildStreamReq(inst *wrapperInst, req comwrapper.WrapperData) (*openai.Chat
 	streamReq := &openai.ChatCompletionRequest{
 		Model: DEFAULT_MODEL_NAME,
 	}
+
+	// 日志打印：解引用指针以便观察实际值
+	var tempLog interface{} = "not_set"
+	if temperature != nil {
+		tempLog = *temperature
+	}
+	var topPLog interface{} = "not_set"
+	if topP != nil {
+		topPLog = *topP
+	}
 	wLogger.Infow("WrapperWrite request parameters",
 		"sid", inst.sid,
-		"temperature", temp,
-		"maxTokens", mt,
-		"topP", tp,
+		"temperature", tempLog,
+		"maxTokens", maxTokens,
+		"topP", topPLog,
 		"param", inst.params,
 	)
-	if mt > 0 {
-		streamReq.MaxTokens = mt
+	if maxTokens > 0 {
+		streamReq.MaxTokens = maxTokens
 	}
-	if temp > 0 {
-		streamReq.Temperature = float32(temp)
+	if temperature != nil {
+		streamReq.Temperature = temperature
 	}
-	if tp > 0 {
-		streamReq.TopP = float32(tp)
+	if topP != nil {
+		streamReq.TopP = topP
 	}
 	streamReq.Stream = true
 	streamReq.StreamOptions = &openai.StreamOptions{

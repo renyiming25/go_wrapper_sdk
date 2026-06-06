@@ -41,7 +41,7 @@ func jsonStringForLog(v any) string {
 	return string(b)
 }
 
-func jsonStringTruncatedForLog(v any, limit int) string {
+func JsonStringTruncatedForLog(v any, limit int) string {
 	return TruncateForLog(jsonStringForLog(v), limit)
 }
 
@@ -59,7 +59,7 @@ func LogStreamReq(req *openai.ChatCompletionRequest, sid string) {
 	wLogger.Infow("WrapperWrite streamReq",
 		"sid", sid,
 		"model", req.Model,
-		"messages", jsonStringTruncatedForLog(req.Messages, lim),
+		"messages", JsonStringTruncatedForLog(req.Messages, lim),
 		"max_tokens", req.MaxTokens,
 		"max_completion_tokens", req.MaxCompletionTokens,
 		"temperature", req.Temperature,
@@ -77,7 +77,7 @@ func LogStreamReq(req *openai.ChatCompletionRequest, sid string) {
 		"user", req.User,
 		"functions", req.Functions,
 		"function_call", req.FunctionCall,
-		"tools", jsonStringTruncatedForLog(req.Tools, lim),
+		"tools", JsonStringTruncatedForLog(req.Tools, lim),
 		"tool_choice", req.ToolChoice,
 		"parallel_tool_calls", req.ParallelToolCalls,
 		"stream_options", req.StreamOptions,
