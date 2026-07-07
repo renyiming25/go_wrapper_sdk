@@ -90,7 +90,7 @@ func ResponseEnd(inst *WrapperInst, index int, usage *openai.Usage, finish_reaso
 		return err
 	}
 	responseData := []comwrapper.WrapperData{content, usageWrapperData}
-	wLogger.Infof("WrapperWrite stream responseEnd index:%v, prompt_tokens_len:%v, result_tokens_len:%v,responseData:%v, sid:%v\n", index, usage.PromptTokens, usage.CompletionTokens, responseData, inst.Sid)
+	wLogger.Debugw("WrapperWrite stream responseEnd", "sid", inst.Sid, "index", index, "prompt_tokens_len", usage.PromptTokens, "result_tokens_len", usage.CompletionTokens, "responseData", responseData)
 	if err = inst.Callback(inst.UsrTag, responseData, nil); err != nil {
 		wLogger.Errorw("WrapperWrite end callback error", "error", err, "sid", inst.Sid)
 		return err

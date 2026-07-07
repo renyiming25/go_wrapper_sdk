@@ -24,6 +24,7 @@ var (
 	promptSearchTemplate        string
 	promptSearchTemplateNoIndex string
 	isReasoningModel            bool
+	servedModelName             string = DEFAULT_MODEL_NAME
 )
 
 // Setter functions to sync configuration from wrapper
@@ -67,6 +68,10 @@ func SetIsReasoningModel(enable bool) {
 	isReasoningModel = enable
 }
 
+func SetServedModelName(modelName string) {
+	servedModelName = modelName
+}
+
 // NewRequestManager 创建请求管理器
 func NewRequestManager(client *OpenAIClient, logger *utils.Logger) *RequestManager {
 	return &RequestManager{
@@ -81,6 +86,7 @@ func BuildStreamReq(inst *WrapperInst, req comwrapper.WrapperData) (*openai.Chat
 		temperature *float32
 		maxTokens   int
 		topP        *float32
+		topK        int
 		stop        []string
 	)
 
@@ -110,24 +116,20 @@ func BuildStreamReq(inst *WrapperInst, req comwrapper.WrapperData) (*openai.Chat
 		}
 	}
 
-	streamReq := &openai.ChatCompletionRequest{
-		Model: DEFAULT_MODEL_NAME,
+	if tkStr, ok := inst.Params["top_k"]; ok {
+		if t, err := strconv.Atoi(tkStr); err == nil {
+			topK = t
+		} else {
+			wLogger.Warnw("Invalid top_k value", "value", tkStr, "sid", inst.Sid)
+		}
 	}
 
-	// 日志打印：解引用指针以便观察实际值
-	var tempLog interface{} = "not_set"
-	if temperature != nil {
-		tempLog = *temperature
+	streamReq := &openai.ChatCompletionRequest{
+		Model: servedModelName,
 	}
-	var topPLog interface{} = "not_set"
-	if topP != nil {
-		topPLog = *topP
-	}
+
 	wLogger.Infow("WrapperWrite request parameters",
 		"sid", inst.Sid,
-		"temperature", tempLog,
-		"maxTokens", maxTokens,
-		"topP", topPLog,
 		"param", inst.Params,
 	)
 	if maxTokens > 0 {
@@ -180,8 +182,10 @@ func BuildStreamReq(inst *WrapperInst, req comwrapper.WrapperData) (*openai.Chat
 	}
 	// 解析 extraBodyStr
 	var extraParams ExtraParams
-	if err := json.Unmarshal([]byte(extraBodyStr), &extraParams); err != nil {
-		wLogger.Errorw("WrapperWrite unmarshal extra_parms error", "error", err, "sid", inst.Sid, "extra_parms", extraBodyStr)
+	if extraBodyStr != "" {
+		if err := json.Unmarshal([]byte(extraBodyStr), &extraParams); err != nil {
+			wLogger.Errorw("WrapperWrite unmarshal extra_parms error", "error", err, "sid", inst.Sid, "extra_parms", extraBodyStr)
+		}
 	}
 	if extraParams.ReasoningEffort != "" {
 		streamReq.ExtraBody["reasoning_effort"] = extraParams.ReasoningEffort
@@ -222,6 +226,12 @@ func BuildStreamReq(inst *WrapperInst, req comwrapper.WrapperData) (*openai.Chat
 	}
 	if extraParams.SkipSpecialTokens != nil {
 		streamReq.ExtraBody["skip_special_tokens"] = *extraParams.SkipSpecialTokens
+	}
+	if topK > 0 {
+		streamReq.ExtraBody["top_k"] = topK
+	}
+	if extraParams.RepetitionPenalty != nil {
+		streamReq.ExtraBody["repetition_penalty"] = *extraParams.RepetitionPenalty
 	}
 	if len(extraParams.Stop) > 0 {
 		if len(extraParams.Stop) > maxStopWords {

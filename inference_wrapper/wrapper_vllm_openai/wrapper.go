@@ -45,7 +45,8 @@ var (
 	enableAppIdHeader           bool   = true
 	parallelToolCalls           bool   = false
 	addWebsearchContent         bool   = false
-	enableVllmMetrics           bool   = true
+	enableVllmMetrics           bool   = false
+	servedModelName             string = "default"
 )
 
 // WrapperInit 插件初始化, 全局只调用一次. 本地调试时, cfg参数由aiges.toml提供
@@ -160,14 +161,12 @@ func WrapperInit(cfg map[string]string) (err error) {
 		wLogger.Infow("Using default CMD_ARGS", "args", extraArgs)
 	} else {
 		wLogger.Infow("Using custom CMD_ARGS", "args", extraArgs)
+		// 解析 --served-model-name 参数
+		servedModelName = common.ParseServedModelName(extraArgs)
+		if servedModelName != "default" {
+			wLogger.Infow("Using custom served-model-name from CMD_EXTRA_ARGS", "model", servedModelName)
+		}
 	}
-
-	// 检查是否启用指标
-	// enableMetrics := common.GetEnvValue("ENABLE_METRICS")
-	// if enableMetrics == "true" {
-	// 	extraArgs += " --enable-metrics"
-	// 	wLogger.Infow("Metrics enabled")
-	// }
 
 	// 检查多节点模式
 	enableMultiNode := common.GetEnvValue("ENABLE_MULTI_NODE_MODE")
@@ -213,6 +212,7 @@ func WrapperInit(cfg map[string]string) (err error) {
 	args := []string{
 		"-m", "vllm.entrypoints.openai.api_server",
 		"--model", baseModel,
+		"--served-model-name", servedModelName,
 		"--port", strconv.Itoa(httpServerPort),
 		"--trust-remote-code",
 		"--host", "0.0.0.0",
@@ -292,6 +292,7 @@ func WrapperInit(cfg map[string]string) (err error) {
 	common.SetPromptSearchTemplate(promptSearchTemplate)
 	common.SetPromptSearchTemplateNoIndex(promptSearchTemplateNoIndex)
 	common.SetIsReasoningModel(isReasoningModel)
+	common.SetServedModelName(servedModelName)
 
 	wLogger.Debugw("WrapperInit successful")
 	return
@@ -325,10 +326,10 @@ func WrapperCreate(usrTag string, params map[string]string, prsIds []int, cb com
 }
 
 func nonStreamingRequest(inst *common.WrapperInst, req *openai.ChatCompletionRequest) error {
-	wLogger.Infof("WrapperWrite function_call req:%v, sid:%v\n", common.ToString(req), inst.Sid)
+	wLogger.Infow("WrapperWrite function_call", "req", common.ToString(req), "sid", inst.Sid)
 	ctx := context.Background()
 	resp, err := inst.Client.OpenaiClient.CreateChatCompletion(ctx, *req)
-	wLogger.Infof("WrapperWrite function_call response:%v, sid:%v\n", common.ToString(resp), inst.Sid)
+	wLogger.Infow("WrapperWrite function_call response", "response", common.ToString(resp), "sid", inst.Sid)
 	if err != nil {
 		wLogger.Errorw("WrapperWrite function_call CreateChatCompletion error", "error", err, "sid", inst.Sid)
 		common.ResponseError(inst, err)
@@ -343,15 +344,31 @@ func nonStreamingRequest(inst *common.WrapperInst, req *openai.ChatCompletionReq
 			})
 		}
 	}
-	wLogger.Debugf("WrapperWrite function_call toolcalls:%v, sid:%v\n response:%v", common.ToString(functionCalls), inst.Sid, common.ToString(resp))
+	wLogger.Debugw("WrapperWrite function_call toolcalls", "toolcalls", common.ToString(functionCalls), "sid", inst.Sid, "response", common.ToString(resp))
 	// 整理结果
 	status := comwrapper.DataEnd
+
+	// Check if response has choices
+	if len(resp.Choices) == 0 {
+		err := fmt.Errorf("no choices in response")
+		wLogger.Errorw("WrapperWrite function_call no choices", "error", err, "sid", inst.Sid)
+		common.ResponseError(inst, err)
+		return err
+	}
+
 	toolCalls := resp.Choices[0].Message.ToolCalls
 	var finishReason string
-	if len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "" {
+	if resp.Choices[0].FinishReason != "" {
 		finishReason = string(resp.Choices[0].FinishReason)
 	}
-	content, err := common.ResponseContent(status, 0, resp.Choices[0].Message.Content, resp.Choices[0].Message.ReasoningContent, nil, toolCalls, finishReason)
+	// vLLM uses "reasoning" field, DeepSeek uses "reasoning_content"
+	reasoningContent := resp.Choices[0].Message.ReasoningContent
+	if reasoningContent == "" {
+		reasoningContent = resp.Choices[0].Message.Reasoning
+	}
+	// Strip leading newlines from content (vLLM adds \n\n after thinking)
+	msgContent := strings.TrimLeft(resp.Choices[0].Message.Content, "\n")
+	content, err := common.ResponseContent(status, 0, msgContent, reasoningContent, nil, toolCalls, finishReason)
 	if err != nil {
 		wLogger.Errorw("WrapperWrite error function_calls callback", "error", err, "sid", inst.Sid)
 		common.ResponseError(inst, err)
@@ -382,7 +399,7 @@ func openaiFunctionCall(inst *common.WrapperInst, functions []openai.FunctionDef
 	req.Tools = openaiTools
 	req.ToolChoice = "auto"
 	req.Stream = false
-	wLogger.Debugf("WrapperWrite function_call req:%v, sid:%v\n", common.ToString(req), inst.Sid)
+	wLogger.Debugw("WrapperWrite function_call", "req", common.ToString(req), "sid", inst.Sid)
 	ctx := context.Background()
 	resp, err := inst.Client.OpenaiClient.CreateChatCompletion(ctx, *req)
 	if err != nil {
@@ -399,15 +416,24 @@ func openaiFunctionCall(inst *common.WrapperInst, functions []openai.FunctionDef
 			})
 		}
 	}
-	wLogger.Debugf("WrapperWrite function_call toolcalls:%v, sid:%v\n response:%v", common.ToString(functionCalls), inst.Sid, common.ToString(resp))
+	wLogger.Debugw("WrapperWrite function_call toolcalls", "toolcalls", common.ToString(functionCalls), "sid", inst.Sid, "response", common.ToString(resp))
 	// 整理结果
 	status := comwrapper.DataEnd
+
+	// Check if response has choices
+	if len(resp.Choices) == 0 {
+		err := fmt.Errorf("no choices in response")
+		wLogger.Errorw("WrapperWrite function_call no choices", "error", err, "sid", inst.Sid)
+		common.ResponseError(inst, err)
+		return err
+	}
+
 	openaiContent := resp.Choices[0].Message.Content
 	if openaiContent == "" {
 		openaiContent = " "
 	}
 	var finishReason string
-	if len(resp.Choices) > 0 && resp.Choices[0].FinishReason != "" {
+	if resp.Choices[0].FinishReason != "" {
 		finishReason = string(resp.Choices[0].FinishReason)
 	}
 	content, err := common.ResponseContent(status, 0, openaiContent, "", functionCalls, nil, finishReason)
@@ -443,7 +469,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 		return nil
 	}
 
-	wLogger.Infow("WrapperWrite start", "sid", inst.Sid, "UsrTag", inst.UsrTag, "req", len(req))
+	wLogger.Infow("WrapperWrite start", "sid", inst.Sid, "UsrTag", inst.UsrTag)
 
 	// 检查是否已停止
 	select {
@@ -473,11 +499,11 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 			}
 		}
 
-		wLogger.Infow("WrapperWrite processing data",
-			"data", common.TruncateForLog(string(v.Data), 300),
-			"status", v.Status,
-			"sid", inst.Sid,
-		)
+		// wLogger.Infow("WrapperWrite processing data",
+		// 	"data", common.TruncateForLog(string(v.Data), 300),
+		// 	"status", v.Status,
+		// 	"sid", inst.Sid,
+		// )
 
 		streamReq, functions, thinking, err := common.BuildStreamReq(inst, v)
 		if err != nil {
@@ -504,6 +530,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 				}
 			}()
 			wLogger.Infow("WrapperWrite starting stream inference", "sid", inst.Sid)
+			startTime := time.Now()
 
 			ctx, cancel := context.WithTimeout(context.Background(), streamContextTimeoutSeconds)
 			inst.Cancel = cancel
@@ -520,6 +547,8 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 
 			index := 0
 			fullContent := ""
+			contentStarted := false
+			firstTokenTime := time.Time{} // 用于记录首token延迟
 
 			status = comwrapper.DataContinue
 			// 首帧返回空
@@ -529,7 +558,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 				common.ResponseError(inst, err)
 				return
 			}
-			wLogger.Infof("fisrtFrameContent:%v index:%v,status:%v sid:%v\n", "", index, status, inst.Sid)
+			wLogger.Debugw("First frame sent", "sid", inst.Sid, "status", status)
 			if err := inst.Callback(inst.UsrTag, []comwrapper.WrapperData{firstFrameContent}, nil); err != nil {
 				wLogger.Errorw("WrapperWrite error callback failed", "error", err, "sid", inst.Sid)
 				return
@@ -565,8 +594,10 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 						common.ResponseError(inst, err)
 						return
 					}
-					if index == 1 || logLevel == "debug" {
-						wLogger.Infow("WrapperWrite index:1 or logLevel:debug frame content", "response", common.ToString(response), "sid", inst.Sid)
+					if index == 1 {
+						firstTokenTime = time.Now()
+						wLogger.Infow("First response frame", "sid", inst.Sid, "ttft_latency_ms", firstTokenTime.Sub(startTime).Milliseconds(), "response", common.ToString(response))
+						wLogger.Debugw("Response frame", "response", common.ToString(response), "sid", inst.Sid)
 					}
 					if len(response.Choices) > 0 {
 						var (
@@ -574,10 +605,23 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 							reasoning_content string
 							tool_calls        []openai.ToolCall
 						)
-						if response.Choices[0].Delta.ReasoningContent != "" {
-							reasoning_content = response.Choices[0].Delta.ReasoningContent
+						// vLLM uses "reasoning" field, DeepSeek uses "reasoning_content"
+						deltaReasoning := response.Choices[0].Delta.ReasoningContent
+						if deltaReasoning == "" {
+							deltaReasoning = response.Choices[0].Delta.Reasoning
+						}
+						if deltaReasoning != "" {
+							reasoning_content = deltaReasoning
 						} else if response.Choices[0].Delta.Content != "" {
 							chunk_content := response.Choices[0].Delta.Content
+							// Strip leading newlines from the first content chunk (vLLM adds \n\n after thinking)
+							if !contentStarted {
+								chunk_content = strings.TrimLeft(chunk_content, "\n")
+								if chunk_content == "" {
+									continue
+								}
+								contentStarted = true
+							}
 							fullContent += chunk_content
 							if index == 1 && strings.HasPrefix(chunk_content, common.R1_THINK_START) {
 								thinking = true
@@ -585,9 +629,9 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 								reasoning_start_chunk := chunks[1]
 								if reasoning_start_chunk != "" {
 									reasoning_start_chunk_content, err := common.ResponseContent(status, index, "", reasoning_start_chunk, nil, nil, "")
-									wLogger.Debugf("WrapperWrite stream response index:%v, status:%v, reasoning_start_chunk:%v, sid:%v\n", index, status, reasoning_start_chunk, inst.Sid)
+									wLogger.Debugw("WrapperWrite stream response reasoning_start_chunk", "index", index, "status", status, "reasoning_start_chunk", reasoning_start_chunk, "sid", inst.Sid)
 									if err != nil {
-										wLogger.Errorw("WrapperWrite reasoning_last_chunk error", "error", err, "sid", inst.Sid)
+										wLogger.Errorw("WrapperWrite reasoning_start_chunk error", "error", err, "sid", inst.Sid)
 										common.ResponseError(inst, err)
 										return
 									}
@@ -608,7 +652,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 
 								if reasoning_last_chunk != "" {
 									reasoning_last_chunk_content, err := common.ResponseContent(status, index, "", reasoning_last_chunk, nil, nil, "")
-									wLogger.Debugf("WrapperWrite stream response index:%v, status:%v, reasoning_last_chunk:%v, sid:%v\n", index, status, reasoning_last_chunk, inst.Sid)
+									wLogger.Debugw("WrapperWrite stream response reasoning_last_chunk", "index", index, "status", status, "reasoning_last_chunk", reasoning_last_chunk, "sid", inst.Sid)
 									if err != nil {
 										wLogger.Errorw("WrapperWrite reasoning_last_chunk error", "error", err, "sid", inst.Sid)
 										common.ResponseError(inst, err)
@@ -623,13 +667,18 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 								}
 
 								if answer_start_chunk != "" {
+									// Strip leading newlines (vLLM adds \n\n after thinking)
+									answer_start_chunk = strings.TrimLeft(answer_start_chunk, "\n")
+								}
+								if answer_start_chunk != "" {
+									contentStarted = true
 									answer_start_chunk_content, err := common.ResponseContent(status, index, answer_start_chunk, "", nil, nil, "")
 									if err != nil {
 										wLogger.Errorw("WrapperWrite answer_start_chunk error", "error", err, "sid", inst.Sid)
 										common.ResponseError(inst, err)
 										return
 									}
-									wLogger.Debugf("WrapperWrite stream response index:%v, status:%v, answer_start_chunk:%v, sid:%v\n", index, status, answer_start_chunk, inst.Sid)
+									wLogger.Debugw("WrapperWrite stream response answer_start_chunk", "index", index, "status", status, "answer_start_chunk", answer_start_chunk, "sid", inst.Sid)
 									responseData = []comwrapper.WrapperData{answer_start_chunk_content}
 									if err = inst.Callback(inst.UsrTag, responseData, nil); err != nil {
 										wLogger.Errorw("WrapperWrite answer_start_chunk_content callback error", "error", err, "sid", inst.Sid)
@@ -649,7 +698,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 							tool_calls = response.Choices[0].Delta.ToolCalls
 
 						} else if response.Choices[0].FinishReason != "" {
-							wLogger.Debugf("WrapperWrite stream response finish reason index:%v, status:%v, finish reason:%v, sid:%v\n", index, status, response.Choices[0].FinishReason, inst.Sid)
+							wLogger.Debugw("WrapperWrite stream response finish reason", "index", index, "status", status, "finish_reason", response.Choices[0].FinishReason, "sid", inst.Sid)
 							finish_reason = string(response.Choices[0].FinishReason)
 							continue
 						}
@@ -668,7 +717,7 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 					} else if response.Usage != nil {
 						promptTokensLen = response.Usage.PromptTokens
 						resultTokensLen = response.Usage.CompletionTokens
-						wLogger.Debugf("WrapperWrite stream responseEnd index:%v, promptTokensLen:%v, resultTokensLen:%v sid:%v\n", index, promptTokensLen, resultTokensLen, inst.Sid)
+						wLogger.Infow("Usage info received", "sid", inst.Sid, "prompt_tokens", promptTokensLen, "completion_tokens", resultTokensLen, "total_chunks", index)
 						err = common.ResponseEnd(inst, index, response.Usage, finish_reason)
 						if err != nil {
 							return
@@ -679,7 +728,17 @@ func WrapperWrite(hdl unsafe.Pointer, req []comwrapper.WrapperData) (err error) 
 			}
 
 		endLoop:
-			wLogger.Infow("WrapperWrite sending end signal", "sid", inst.Sid, "fullContent", fullContent, "in_tokens", promptTokensLen, "out_tokens", resultTokensLen)
+			duration := time.Since(startTime)
+			tps := float64(0)
+			if duration.Seconds() > 0 && resultTokensLen > 0 {
+				tps = float64(resultTokensLen) / duration.Seconds()
+			}
+			wLogger.Infow("WrapperWrite stream completed",
+				"sid", inst.Sid,
+				"duration_ms", duration.Milliseconds(),
+				"ttft_latency_ms", firstTokenTime.Sub(startTime).Milliseconds(),
+				"tokens_per_second", fmt.Sprintf("%.2f", tps),
+				"fullContent", common.JsonStringTruncatedForLog(fullContent, 300))
 			inst.StopQ <- true
 
 		}(streamReq, v.Status)
@@ -717,7 +776,7 @@ func WrapperFini() (err error) {
 			wLogger.Infof("WrapperFini cmd kill success")
 		}
 	}
-	wLogger.Infof("WarpperFini success")
+	wLogger.Infof("WrapperFini success")
 	return
 }
 
@@ -751,6 +810,23 @@ func WrapperSetCtrl(fType comwrapper.CustomFuncType, f interface{}) (err error) 
 
 func WrapperExec(usrTag string, params map[string]string, reqData []comwrapper.WrapperData) (respData []comwrapper.WrapperData, err error) {
 	return nil, nil
+}
+
+// WrapperLoadRes 加载资源（LoRA适配器）
+func WrapperLoadRes(res comwrapper.WrapperData, resId int) (err error) {
+	wLogger.Debugw("WrapperLoadRes called", "resId", resId, "key", res.Key)
+	// TODO: 实现 vLLM 的 LoRA 加载逻辑
+	// vLLM 的 LoRA API 可能与 SGLang 不同，需要根据 vLLM 文档实现
+	wLogger.Warnw("WrapperLoadRes not fully implemented for vLLM", "resId", resId)
+	return nil
+}
+
+// WrapperUnloadRes 卸载资源（LoRA适配器）
+func WrapperUnloadRes(resId int) (err error) {
+	wLogger.Debugw("WrapperUnloadRes called", "resId", resId)
+	// TODO: 实现 vLLM 的 LoRA 卸载逻辑
+	wLogger.Warnw("WrapperUnloadRes not fully implemented for vLLM", "resId", resId)
+	return nil
 }
 
 // WrapperNotify 插件通知

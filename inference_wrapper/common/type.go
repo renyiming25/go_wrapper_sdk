@@ -34,6 +34,7 @@ type ExtraParams struct {
 	ReasoningEffort      string         `json:"reasoning_effort,omitempty"`
 	FrequencyPenalty     *float32       `json:"frequency_penalty,omitempty"`
 	PresencePenalty      *float32       `json:"presence_penalty,omitempty"`
+	RepetitionPenalty    *float32       `json:"repetition_penalty,omitempty"`
 	ContinueFinalMessage bool           `json:"continue_final_message,omitempty"`
 	Stop                 []string       `json:"stop,omitempty"`
 	SkipSpecialTokens    *bool          `json:"skip_special_tokens,omitempty"`

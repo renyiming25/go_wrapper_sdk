@@ -99,7 +99,7 @@ func GetFreePort() (int, error) {
 }
 
 func WritePortToFile(port int) error {
-	file, err := os.Create("/home/aiges/sglangport")
+	file, err := os.Create("/home/aiges/vllmport")
 	if err != nil {
 		return err
 	}
@@ -112,6 +112,18 @@ func GetEnvValue(key string) string {
 	envStr := os.Getenv(key)
 	wLogger.Infof("getEnvValue %s=%s", key, envStr)
 	return envStr
+}
+
+// ParseServedModelName 从 CMD_EXTRA_ARGS 中解析 --served-model-name 参数
+// 如果未找到，返回默认值 "default"
+func ParseServedModelName(cmdArgs string) string {
+	fields := strings.Fields(cmdArgs)
+	for i := 0; i < len(fields); i++ {
+		if fields[i] == "--served-model-name" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return "default"
 }
 
 // isTokenLimitExceededError 检查是否是token超限错误
