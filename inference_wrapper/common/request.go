@@ -293,6 +293,8 @@ func BuildStreamReq(inst *WrapperInst, req comwrapper.WrapperData) (*openai.Chat
 	}
 	if inst.ContinueFinalMessage {
 		streamReq.ExtraBody["continue_final_message"] = true
+		// continue_final_message and add_generation_prompt are mutually exclusive
+		streamReq.ExtraBody["add_generation_prompt"] = false
 	}
 	if len(stop) > 0 {
 		streamReq.Stop = stop
