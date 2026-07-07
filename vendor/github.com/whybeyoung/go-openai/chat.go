@@ -78,17 +78,29 @@ type ChatMessageImageURL struct {
 	Detail ImageURLDetail `json:"detail,omitempty"`
 }
 
+type ChatMessageAudioURL struct {
+	URL string `json:"url,omitempty"`
+}
+
+type ChatMessageVideoURL struct {
+	URL string `json:"url,omitempty"`
+}
+
 type ChatMessagePartType string
 
 const (
 	ChatMessagePartTypeText     ChatMessagePartType = "text"
 	ChatMessagePartTypeImageURL ChatMessagePartType = "image_url"
+	ChatMessagePartTypeAudioURL ChatMessagePartType = "audio_url"
+	ChatMessagePartTypeVideoURL ChatMessagePartType = "video_url"
 )
 
 type ChatMessagePart struct {
 	Type     ChatMessagePartType  `json:"type,omitempty"`
 	Text     string               `json:"text,omitempty"`
 	ImageURL *ChatMessageImageURL `json:"image_url,omitempty"`
+	AudioURL *ChatMessageAudioURL `json:"audio_url,omitempty"`
+	VideoURL *ChatMessageVideoURL `json:"video_url,omitempty"`
 }
 
 type ChatCompletionMessage struct {
